@@ -145,13 +145,24 @@ def test_digamma_large_x(device):
     crossover (102) and several decades past x=1000.
     """
     xs = torch.tensor(
-        [[101.0, 102.0, 103.0, 150.0, 500.0, 1000.0, 5000.0, 1e4, 5e4, 1e5, 5e5, 1e6, 1e7, float("inf")]],
+        [[101.0, 102.0, 103.0, 150.0, 500.0, 1000.0, 5000.0, 1e4, 5e4, 1e5, 5e5, 1e6, 1e7, float("inf"), float("nan")]],
         dtype=torch.bfloat16,
     )
     golden = torch.digamma(xs.to(torch.float64)).to(torch.float32)
     input_tensor = ttnn.from_torch(xs, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=device)
     output_tensor = ttnn.to_torch(ttnn.digamma(input_tensor))
     assert_with_ulp(golden, output_tensor, 2, allow_nonfinite=True)
+
+
+def test_digamma_large_x_fp32(device):
+    xs = torch.tensor(
+        [[102.0, 103.0, 150.0, 1820.104, 5000.0, 1e4, 1e6, 1e7, 1e12, 3e38, float("inf"), float("nan")]],
+        dtype=torch.float32,
+    )
+    golden = torch.digamma(xs.to(torch.float64)).to(torch.float32)
+    input_tensor = ttnn.from_torch(xs, dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=device)
+    output_tensor = ttnn.to_torch(ttnn.digamma(input_tensor))
+    assert_with_ulp(golden, output_tensor, 1, allow_nonfinite=True)
 
 
 def test_digamma_small_x(device):

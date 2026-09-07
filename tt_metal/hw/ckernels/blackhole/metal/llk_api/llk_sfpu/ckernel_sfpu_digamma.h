@@ -78,9 +78,6 @@ inline void calculate_digamma() {
         // digamma(x) = ln(x) - 1/(2x) - 1/(12x^2) + 1/(120x^4) - ... is ~exact for large x
         // (truncation error ~8e-11 at x=102), restoring the (1, inf) support the pre-LUT
         // composite op provided. Crossover at the LUT's upper bound 102 is seamless.
-        // NOTE: uses the register-free (bf16-grade) log body, so large-x fp32 is only
-        // bf16-accurate. #45520 targets bf16 ULP; an fp32-accurate log here would collide
-        // with the reciprocal's vConstFloatPrgm0, so fp32 large-x is intentionally left as-is.
         v_if(x > 102.0f) {
             sfpi::vFloat inv_x = sfpu_reciprocal_iter<2>(x);
             sfpi::vFloat inv_x2 = inv_x * inv_x;
@@ -88,10 +85,35 @@ inline void calculate_digamma() {
             // the reciprocal owns vConstFloatPrgm0/1/2 for its Newton seed, so digamma has no
             // free program-constant registers to hold them.
             sfpi::vFloat bern = sfpi::vFloat(0.0833333333f) - inv_x2 * sfpi::vFloat(0.0083333333f);
+#ifdef INP_FLOAT32
+            sfpi::vFloat three_quarters = 0.75f;
+            sfpi::vInt e = sfpi::as<sfpi::vInt>(x) - sfpi::as<sfpi::vInt>(three_quarters);
+            e = sfpi::as<sfpi::vInt>(sfpi::setman(sfpi::as<sfpi::vFloat>(e), 0));
+            sfpi::vFloat m = sfpi::as<sfpi::vFloat>(sfpi::as<sfpi::vInt>(x) - e);
+            m -= 1.0f;
+            sfpi::vFloat s = m * m;
+            sfpi::vFloat r = -0x1.92cp-5f;
+            r = r * m + 0x1.b84p-4f;
+            r = r * m + -0x1.0c4p-3f;
+            r = r * m + 0x1.274p-3f;
+            r = r * m + -0x1.55p-3f;
+            r = r * m + 0x1.998p-3f;
+            sfpi::vMag abs_e = sfpi::abs(e);
+            r = r * m + sfpi::vFloat(-0x1.00001ap-2f);
+            sfpi::vFloat e_float = sfpi::convert<sfpi::vFloat>(abs_e, sfpi::RoundMode::Nearest);
+            r = r * m + sfpi::vFloat(0x1.555572p-2f);
+            sfpi::vFloat neg_half = -0.5f;
+            r = __builtin_rvtt_sfpmad(r.get(), m.get(), neg_half.get(), sfpi::SFPMAD_MOD1_OFFSET_NONE);
+            r = r * s + m;
+            e_float = sfpi::copysgn(e_float, sfpi::as<sfpi::vFloat>(e));
+            constexpr float LOG_TWO = 0.693147182f;
+            constexpr float TWO_TO_M23 = 1.19209290e-7f;
+            sfpi::vFloat log_x = e_float * sfpi::vFloat(LOG_TWO * TWO_TO_M23) + r;
+            result = log_x - inv_x * sfpi::vFloat(0.5f) - inv_x2 * bern;
+#else
             result = _calculate_log_body_no_init_(x) - inv_x * sfpi::vFloat(0.5f) - inv_x2 * bern;
-            // digamma(+inf) = +inf; the log approximation clamps inf to a finite value, so
-            // restore it explicitly (exp field all-ones, zero mantissa => infinity).
-            v_if(sfpi::exexp(x) == 128 && sfpi::exman(x) == 0) { result = std::numeric_limits<float>::infinity(); }
+#endif
+            v_if(sfpi::exexp(x) == 128) { result = x; }
             v_endif;
         }
         v_endif;
